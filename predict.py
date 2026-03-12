@@ -1,65 +1,53 @@
 import os
-from PIL import Image
 import torch
-import torch.nn as nn
-from torchvision import models, transforms
+import torchvision.transforms as T
+from torchvision import models
+from PIL import Image
 
-def build_model(num_classes):
+CITIES = ["Anaheim", "Bakersfield", "Los Angeles", "Riverside", "San Diego", "SLO"]
+
+IMG_SIZE = 224
+
+
+def get_model(num_classes=6):
     model = models.resnet18(weights=None)
-
-    for param in model.parameters():
-        param.requires_grad = False
-
-    for param in model.layer4.parameters():
-        param.requires_grad = True
-
-    num_features = model.fc.in_features
-    model.fc = nn.Linear(num_features, num_classes)
-
+    model.fc = torch.nn.Linear(model.fc.in_features, num_classes)
     return model
+
 
 def predict(image_path):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    model_file = os.path.join(os.path.dirname(__file__), "socal_model.pt")
-    checkpoint = torch.load(model_file, map_location=device)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    weights_path = os.path.join(script_dir, "model_weights.pt")
 
-    class_names = checkpoint["class_names"]
-    img_size = checkpoint.get("img_size", 224)
-
-    model = build_model(num_classes=len(class_names))
-    model.load_state_dict(checkpoint["model_state_dict"])
-    model.to(device)
+    model = get_model(num_classes=len(CITIES))
+    model.load_state_dict(torch.load(weights_path, map_location=device, weights_only=True))
+    model = model.to(device)
     model.eval()
 
-    transform = transforms.Compose([
-        transforms.Resize((img_size, img_size)),
-        transforms.ToTensor(),
-        transforms.Normalize(
-            mean=[0.485, 0.456, 0.406],
-            std=[0.229, 0.224, 0.225]
-        )
+    transform = T.Compose([
+        T.Resize((IMG_SIZE, IMG_SIZE)),
+        T.ToTensor(),
+        T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
 
-    predictions = {}
+    results = {}
+    image_files = [f for f in os.listdir(image_path) if f.lower().endswith(".jpg")]
 
-    image_files = [
-        f for f in os.listdir(image_path)
-        if f.lower().endswith((".jpg", ".jpeg", ".png"))
-    ]
-    image_files.sort()
+    for filename in image_files:
+        img_path = os.path.join(image_path, filename)
+        try:
+            img = Image.open(img_path).convert("RGB")
+        except Exception:
+            results[filename] = CITIES[0]
+            continue
 
-    with torch.no_grad():
-        for filename in image_files:
-            full_path = os.path.join(image_path, filename)
-
-            image = Image.open(full_path).convert("RGB")
-            x = transform(image).unsqueeze(0).to(device)
-
+        x = transform(img).unsqueeze(0).to(device)
+        with torch.no_grad():
             logits = model(x)
-            pred_idx = torch.argmax(logits, dim=1).item()
-            pred_city = class_names[pred_idx]
+            pred_idx = logits.argmax(dim=1).item()
 
-            predictions[filename] = pred_city
+        results[filename] = CITIES[pred_idx]
 
-    return predictions
+    return results
