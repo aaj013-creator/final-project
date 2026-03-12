@@ -19,7 +19,18 @@ def predict(image_path):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    weights_path = os.path.join(script_dir, "model_weights.pt")
+    possible_names = ("model_weights.pt", "model_weight.pt", "model_weights", "model_weight")
+    weights_path = None
+    for name in possible_names:
+        p = os.path.join(script_dir, name)
+        if os.path.isfile(p):
+            weights_path = p
+            break
+    if weights_path is None:
+        raise FileNotFoundError(
+            f"No model weights file found in {script_dir}. "
+            "Include model_weights.pt (or model_weight.pt) in your zip at the top level."
+        )
 
     model = get_model(num_classes=len(CITIES))
     model.load_state_dict(torch.load(weights_path, map_location=device, weights_only=True))
